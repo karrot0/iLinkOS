@@ -1,0 +1,50 @@
+name: Release
+
+# Pushing a tag such as v0.1.0 builds iLinkOS and publishes it as a GitHub release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  # The LGPL ffmpeg shipped beside the programs. BtbN replaces this file with a fresh
+  # build of the same release branch; change the branch here to move to a newer ffmpeg.
+  FFMPEG_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-win64-lgpl-9.0.zip
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --no-self-update
+
+      # The TLS library (aws-lc) is assembled with NASM, which the runner does not have.
+      - uses: ilammy/setup-nasm@v1
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Fetch ffmpeg
+        run: |
+          curl.exe --fail --location --silent --show-error --output ffmpeg.zip $env:FFMPEG_URL
+          7z e ffmpeg.zip -offmpeg "*/bin/ffmpeg.exe" "*/LICENSE.txt"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Package
+        run: |
+          $name = "ilinkos-$env:GITHUB_REF_NAME-windows-x64"
+          New-Item -ItemType Directory $name | Out-Null
+          Copy-Item target\release\ilinkos.exe, target\release\ilinkos-app.exe, README.md $name
+          Copy-Item ffmpeg\ffmpeg.exe $name
+          Copy-Item ffmpeg\LICENSE.txt $name\ffmpeg-LICENSE.txt
+          Compress-Archive -Path $name -DestinationPath "$name.zip"
+          "ZIP=$name.zip" >> $env:GITHUB_ENV
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create $env:GITHUB_REF_NAME $env:ZIP --title "iLinkOS $env:GITHUB_REF_NAME" --generate-notes
